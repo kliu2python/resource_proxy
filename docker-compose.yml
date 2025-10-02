@@ -1,0 +1,40 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    image: mobile-device-manager:latest
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      APPIUM_SERVER: http://appium:4723/wd/hub
+      # Optional: override defaults
+      # WDA_PORT_START: 8100
+      # WDA_PORT_END: 8199
+    ports:
+      - "8090:8090"
+    depends_on:
+      - redis
+      - appium
+    command: ["uvicorn", "mobile_device_manager.main:app", "--host", "0.0.0.0", "--port", "8090"]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  appium:
+    image: appium/appium
+    ports:
+      - "4723:4723"
+    privileged: true
+    # For real devices, you may need to pass through USB devices:
+    # devices:
+    #   - "/dev/bus/usb:/dev/bus/usb"
+    environment:
+      # Appium env tweaks as needed
+      RELAXED_SECURITY: "true"
+
+volumes:
+  redis-data:
