@@ -6,6 +6,7 @@ from .models import Device, ReserveRequest, ReleaseRequest, Heartbeat
 from .storage import DeviceStore
 from .appium_controller import start_appium_session, stop_appium_session
 from .config import REDIS_URL
+from .appium_pool import AppiumServerPool
 
 app = FastAPI(title="Mobile Device Manager (Redis)")
 
@@ -19,6 +20,12 @@ def get_redis() -> Redis:
 
 def get_store(r: Redis = Depends(get_redis)) -> DeviceStore:
     return DeviceStore(r)
+
+def get_appium_pool(r: Redis = Depends(get_redis)) -> AppiumServerPool:
+    try:
+        return AppiumServerPool(r)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 @app.post("/devices/register")
 def register_device(device: Device, store: DeviceStore = Depends(get_store)):
@@ -42,7 +49,11 @@ def get_device(device_id: str, store: DeviceStore = Depends(get_store)):
     return d
 
 @app.post("/devices/reserve")
-def reserve_device(req: ReserveRequest, store: DeviceStore = Depends(get_store)):
+def reserve_device(
+    req: ReserveRequest,
+    store: DeviceStore = Depends(get_store),
+    pool: AppiumServerPool = Depends(get_appium_pool),
+):
     d = store.get(req.device_id)
     if not d:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -68,26 +79,53 @@ def reserve_device(req: ReserveRequest, store: DeviceStore = Depends(get_store))
                 wda_port = store.allocate_wda_port()
                 store.set_wda_port_on_device(d.device_id, wda_port)
 
-        session_id = start_appium_session(
-            d.device_id, d.platform, d.version, wda_local_port=wda_port
-        )
-        store.reserve(d.device_id, session_id)
-        return {"message": f"Device {d.device_id} reserved", "session_id": session_id, "wdaLocalPort": wda_port}
+        try:
+            server = pool.acquire()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        try:
+            session_id = start_appium_session(
+                server,
+                d.device_id,
+                d.platform,
+                d.version,
+                wda_local_port=wda_port,
+            )
+        except Exception as exc:
+            pool.release(server)
+            raise HTTPException(status_code=502, detail=f"Failed to start Appium session: {exc}") from exc
+
+        store.reserve(d.device_id, session_id, server)
+        return {
+            "message": f"Device {d.device_id} reserved",
+            "session_id": session_id,
+            "wdaLocalPort": wda_port,
+            "appiumServer": server,
+        }
     finally:
         store.release_lock(req.device_id)
 
 @app.post("/devices/{device_id}/release")
-def release_device(device_id: str, body: ReleaseRequest = ReleaseRequest(), store: DeviceStore = Depends(get_store)):
+def release_device(
+    device_id: str,
+    body: ReleaseRequest = ReleaseRequest(),
+    store: DeviceStore = Depends(get_store),
+    pool: AppiumServerPool = Depends(get_appium_pool),
+):
     d = store.get(device_id)
     if not d:
         raise HTTPException(status_code=404, detail="Device not found")
     if d.status != "in_use":
         raise HTTPException(status_code=409, detail="Device is not in use")
-    if d.current_session:
+    server = d.appium_server
+    if d.current_session and server:
         try:
-            stop_appium_session(d.current_session)
+            stop_appium_session(server, d.current_session)
         except Exception:
             pass
+    if server:
+        pool.release(server)
     store.release(device_id)
     return {"message": f"Device {device_id} released"}
 

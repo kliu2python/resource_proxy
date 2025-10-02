@@ -23,6 +23,7 @@ def _device_to_hash(d: Device) -> Dict[str, Any]:
         "status": d.status,
         "current_session": d.current_session or "",
         "wda_local_port": str(d.wda_local_port or ""),
+        "appium_server": d.appium_server or "",
         "updated_at": str(int(time.time()))
     }
 
@@ -42,7 +43,8 @@ def _hash_to_device(h: Dict[str, Any]) -> Device:
         status=h.get("status"),  # type: ignore
         current_session=h.get("current_session") or None,
         updated_at=None,
-        wda_local_port=wda
+        wda_local_port=wda,
+        appium_server=h.get("appium_server") or None,
     )
 
 class DeviceStore:
@@ -121,12 +123,13 @@ class DeviceStore:
         self.r.delete(LOCK_KEY.format(id=device_id))
 
     # ---- Reserve / Release ----
-    def reserve(self, device_id: str, session_id: str) -> None:
+    def reserve(self, device_id: str, session_id: str, appium_server: str) -> None:
         key = DEVICE_KEY.format(id=device_id)
         pipe = self.r.pipeline(transaction=True)
         pipe.hset(key, mapping={
             "status": "in_use",
             "current_session": session_id,
+            "appium_server": appium_server,
             "updated_at": str(int(time.time()))
         })
         pipe.srem(STATUS_IDX.format(status="available"), device_id)
@@ -140,6 +143,7 @@ class DeviceStore:
         pipe.hset(key, mapping={
             "status": "available",
             "current_session": "",
+            "appium_server": "",
             "updated_at": str(int(time.time()))
         })
         pipe.srem(STATUS_IDX.format(status="in_use"), device_id)
