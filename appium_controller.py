@@ -1,7 +1,16 @@
 import requests
-from .config import APPIUM_SERVER
 
-def start_appium_session(device_id: str, platform: str, version: str, wda_local_port: int | None = None) -> str:
+
+def _normalise_server(server: str) -> str:
+    return server.rstrip("/")
+
+def start_appium_session(
+    server: str,
+    device_id: str,
+    platform: str,
+    version: str,
+    wda_local_port: int | None = None,
+) -> str:
     first_match = {
         "platformName": platform,
         "platformVersion": version,
@@ -12,7 +21,8 @@ def start_appium_session(device_id: str, platform: str, version: str, wda_local_
         first_match["wdaLocalPort"] = int(wda_local_port)
 
     payload = {"capabilities": {"firstMatch": [first_match]}}
-    resp = requests.post(f"{APPIUM_SERVER}/session", json=payload, timeout=60)
+    base = _normalise_server(server)
+    resp = requests.post(f"{base}/session", json=payload, timeout=60)
     resp.raise_for_status()
     val = resp.json().get("value", {})
     sid = val.get("sessionId") or resp.json().get("sessionId")
@@ -20,5 +30,6 @@ def start_appium_session(device_id: str, platform: str, version: str, wda_local_
         raise RuntimeError(f"Cannot parse Appium sessionId from: {resp.text}")
     return sid
 
-def stop_appium_session(session_id: str) -> None:
-    requests.delete(f"{APPIUM_SERVER}/session/{session_id}", timeout=30)
+def stop_appium_session(server: str, session_id: str) -> None:
+    base = _normalise_server(server)
+    requests.delete(f"{base}/session/{session_id}", timeout=30)

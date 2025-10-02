@@ -14,6 +14,7 @@ class Device(BaseModel):
     updated_at: Optional[datetime] = None
     # iOS: ensure per-device WDA port to avoid collisions
     wda_local_port: Optional[int] = None
+    appium_server: Optional[str] = None
 
 class ReserveRequest(BaseModel):
     device_id: str
